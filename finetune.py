@@ -36,14 +36,14 @@ LORA_TARGET_MODULES = ["q_proj", "k_proj", "v_proj", "o_proj"]   # all attention
 
 # Training
 TRAIN_DATA       = os.path.join(ROOT, "data", "train_alpaca.jsonl")
-TRAIN_SAMPLES    = 10_000
+TRAIN_SAMPLES    = 5_000
 LEARNING_RATE    = 2e-4
 BATCH_SIZE       = 4
 GRAD_ACCUM       = 8    # effective batch = BATCH_SIZE * GRAD_ACCUM
 MAX_EPOCHS       = 2
 WARMUP_RATIO     = 0.03
 LR_SCHEDULER     = "cosine"
-MAX_SEQ_LEN      = 512
+MAX_SEQ_LEN      = 256
 BF16             = True
 THINKING_MODE    = False   # disable <think> tokens during evaluation
 
@@ -94,6 +94,18 @@ def train(start_time: float):
     )
     from peft import LoraConfig, get_peft_model, TaskType
     from torch.utils.data import Dataset
+    from transformers import TrainerCallback
+
+    class BudgetCallback(TrainerCallback):
+        """Stop training when wall-clock budget is exhausted."""
+        def __init__(self, deadline: float):
+            self.deadline = deadline
+
+        def on_step_end(self, args, state, control, **kwargs):
+            if time.time() >= self.deadline:
+                print(f"\nBudget reached at step {state.global_step}. Stopping training.", flush=True)
+                control.should_training_stop = True
+            return control
 
     os.makedirs(ADAPTER_OUT, exist_ok=True)
 
@@ -118,7 +130,7 @@ def train(start_time: float):
         quantization_config=bnb_config,
         device_map="auto",
         trust_remote_code=True,
-        torch_dtype=compute_dtype,
+        dtype=compute_dtype,
     )
     model.config.use_cache = False
 
@@ -161,13 +173,10 @@ def train(start_time: float):
         print("WARNING: less than 60s left for training, skipping straight to eval", flush=True)
         train_budget = 60
 
+    deadline = time.time() + train_budget
     steps_per_epoch = len(dataset) // (BATCH_SIZE * GRAD_ACCUM)
-    # Rough estimate: 1 step ~2s on RTX 5070 with 4-bit + seq512
-    secs_per_step = 2.0
-    max_steps = int(train_budget / secs_per_step)
-    total_steps = steps_per_epoch * MAX_EPOCHS
-    max_steps = min(max_steps, total_steps)
-    print(f"Training budget: {train_budget:.0f}s -> max {max_steps} steps", flush=True)
+    max_steps = steps_per_epoch * MAX_EPOCHS  # BudgetCallback will stop early by wall-clock
+    print(f"Training budget: {train_budget:.0f}s, max steps (ceiling): {max_steps}", flush=True)
 
     training_args = TrainingArguments(
         output_dir=ADAPTER_OUT,
@@ -191,6 +200,7 @@ def train(start_time: float):
         args=training_args,
         train_dataset=dataset,
         data_collator=collator,
+        callbacks=[BudgetCallback(deadline)],
     )
 
     print("Starting training...", flush=True)

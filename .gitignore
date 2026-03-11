@@ -10,6 +10,8 @@ data/adapter_tmp/
 data/train_alpaca.jsonl
 data/train_ultrafeedback.jsonl
 data/ifeval_prompts.jsonl
+data/train_ifeval_rejection.jsonl
+data/train_synthetic.jsonl
 
 # Python
 __pycache__/
