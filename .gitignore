@@ -9,6 +9,7 @@ data/adapter_tmp/
 # Data files (large)
 data/train_alpaca.jsonl
 data/train_ultrafeedback.jsonl
+data/ifeval_prompts.jsonl
 
 # Python
 __pycache__/
