@@ -24,13 +24,13 @@ THINKING_MODE  = False  # never use <think> tokens for consistent comparison
 EVAL_BATCH_SIZE = 16    # prompts generated in parallel; lower if OOM
 
 
-# ── IFEval Verifiers ─────────────────────────────────────────────────────────
+# IFEval Verifiers
 
 def verify_instruction(instruction_id: str, kwargs: dict, response: str) -> bool:
     """Return True if the response satisfies the given IFEval instruction."""
     resp = response.strip()
 
-    # ── keyword ────────────────────────────────────────────────────────────
+    # keyword
     if instruction_id == "keywords:existence":
         keywords = kwargs.get("keywords", [])
         return all(kw.lower() in resp.lower() for kw in keywords)
@@ -61,7 +61,7 @@ def verify_instruction(instruction_id: str, kwargs: dict, response: str) -> bool
             return count <= freq
         return count == freq
 
-    # ── length_constraint ──────────────────────────────────────────────────
+    # length_constraint
     if instruction_id == "length_constraint:number_sentences":
         sentences = [s.strip() for s in re.split(r'[.!?]+', resp) if s.strip()]
         num = len(sentences)
@@ -105,9 +105,9 @@ def verify_instruction(instruction_id: str, kwargs: dict, response: str) -> bool
         words = para.split()
         return bool(words) and words[0].lower() == first_word.lower()
 
-    # ── detectable_format ──────────────────────────────────────────────────
+    # detectable_format
     if instruction_id == "detectable_format:number_bullet_lists":
-        bullet_lines = [l for l in resp.split("\n") if re.match(r'^\s*[-*•]\s+', l)]
+        bullet_lines = [l for l in resp.split("\n") if re.match(r'^\s*[-*]\s+', l)]
         num = len(bullet_lines)
         relation = kwargs.get("relation", "at least")
         target = kwargs.get("num_bullets", 0)
@@ -118,7 +118,6 @@ def verify_instruction(instruction_id: str, kwargs: dict, response: str) -> bool
         return num == target
 
     if instruction_id == "detectable_format:constrained_response":
-        # response must be one of a set of options
         options = kwargs.get("options", [])
         return resp.strip() in options
 
@@ -134,7 +133,6 @@ def verify_instruction(instruction_id: str, kwargs: dict, response: str) -> bool
         return num == target
 
     if instruction_id == "detectable_format:multiple_sections":
-        # Check for markdown section headers
         headers = re.findall(r'^#{1,6}\s+\S', resp, re.MULTILINE)
         num = len(headers)
         relation = kwargs.get("relation", "at least")
@@ -147,7 +145,6 @@ def verify_instruction(instruction_id: str, kwargs: dict, response: str) -> bool
 
     if instruction_id == "detectable_format:json_format":
         try:
-            # Find the first JSON object or array in the response
             match = re.search(r'(\{[\s\S]*\}|\[[\s\S]*\])', resp)
             if match:
                 json.loads(match.group(1))
@@ -157,14 +154,13 @@ def verify_instruction(instruction_id: str, kwargs: dict, response: str) -> bool
         return False
 
     if instruction_id == "detectable_format:title":
-        # Response contains a title-cased line (all words capitalized)
         for line in resp.split("\n"):
             line = line.strip()
             if line and line == line.title():
                 return True
         return False
 
-    # ── startend ──────────────────────────────────────────────────────────
+    # startend
     if instruction_id == "startend:end_checker":
         end_phrase = kwargs.get("end_phrase", "")
         return resp.endswith(end_phrase)
@@ -176,7 +172,7 @@ def verify_instruction(instruction_id: str, kwargs: dict, response: str) -> bool
     if instruction_id == "startend:quotation":
         return resp.startswith('"') and resp.endswith('"')
 
-    # ── detectable_content ────────────────────────────────────────────────
+    # detectable_content
     if instruction_id == "detectable_content:number_placeholders":
         placeholders = re.findall(r'\[[^\]]+\]', resp)
         num = len(placeholders)
@@ -192,33 +188,28 @@ def verify_instruction(instruction_id: str, kwargs: dict, response: str) -> bool
         postscript_marker = kwargs.get("postscript_marker", "P.S.")
         return postscript_marker in resp
 
-    # ── language ──────────────────────────────────────────────────────────
+    # language
     if instruction_id == "language:response_language":
-        # Basic heuristic: check for non-ASCII character density
-        # A proper language detector would need langdetect library
         try:
             import langdetect
             lang = langdetect.detect(resp)
             return lang == kwargs.get("language", "en")
         except Exception:
-            # Fallback: if required language is 'en', check mostly ASCII
             required = kwargs.get("language", "en")
             if required == "en":
                 ascii_ratio = sum(1 for c in resp if ord(c) < 128) / max(len(resp), 1)
                 return ascii_ratio > 0.9
-            return True  # can't verify without langdetect
+            return True
 
-    # ── combination ───────────────────────────────────────────────────────
+    # combination
     if instruction_id == "combination:two_responses":
-        # Response must contain two distinct answers separated by ****
         return "****" in resp
 
     if instruction_id == "combination:repeat_prompt":
-        # Response must first repeat the prompt, then give answer
         prompt_text = kwargs.get("prompt_to_repeat", "")
         return prompt_text.lower() in resp.lower() if prompt_text else False
 
-    # ── change_case ──────────────────────────────────────────────────────
+    # change_case
     if instruction_id == "change_case:capital_word_frequency":
         capital_words = [w for w in resp.split() if w.isupper() and len(w) > 1]
         num = len(capital_words)
@@ -236,15 +227,15 @@ def verify_instruction(instruction_id: str, kwargs: dict, response: str) -> bool
     if instruction_id == "change_case:english_lowercase":
         return resp == resp.lower()
 
-    # ── punctuation ───────────────────────────────────────────────────────
+    # punctuation
     if instruction_id == "punctuation:no_comma":
         return "," not in resp
 
-    # Unknown instruction — give benefit of the doubt
+    # Unknown instruction - give benefit of the doubt
     return True
 
 
-# ── Model Loading ─────────────────────────────────────────────────────────────
+# Model Loading
 
 def load_model(use_adapter: bool):
     import torch
@@ -284,13 +275,12 @@ def load_model(use_adapter: bool):
     return model, tokenizer
 
 
-# ── Batch Generation ──────────────────────────────────────────────────────────
+# Batch Generation
 
 def generate_batch(model, tokenizer, prompt_texts: list[str], max_new_tokens: int = 512) -> list[str]:
     """Generate responses for a batch of prompts in one forward pass."""
     import torch
 
-    # Format all prompts with chat template
     formatted = [
         tokenizer.apply_chat_template(
             [{"role": "user", "content": p}],
@@ -320,9 +310,8 @@ def generate_batch(model, tokenizer, prompt_texts: list[str], max_new_tokens: in
             pad_token_id=tokenizer.eos_token_id,
         )
 
-    # Decode only the newly generated tokens for each item
     responses = []
-    for i, out in enumerate(outputs):
+    for out in outputs:
         new_tokens = out[input_len:]
         text = tokenizer.decode(new_tokens, skip_special_tokens=True).strip()
         responses.append(text)
@@ -330,7 +319,7 @@ def generate_batch(model, tokenizer, prompt_texts: list[str], max_new_tokens: in
     return responses
 
 
-# ── Main ──────────────────────────────────────────────────────────────────────
+# Main
 
 def main():
     parser = argparse.ArgumentParser()
@@ -343,7 +332,6 @@ def main():
         print("Run: uv run python prepare.py", file=sys.stderr)
         sys.exit(1)
 
-    # Load prompts
     prompts = []
     with open(IFEVAL_PATH, "r", encoding="utf-8") as f:
         for line in f:

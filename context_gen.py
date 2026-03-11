@@ -36,8 +36,8 @@ def generate():
 
     lines = []
 
-    # ── Section 1: Current Best ─────────────────────────────────────────────
-    lines.append("# CONTEXT — IFEval Fine-Tuning Researcher\n")
+    # Section 1: Current Best
+    lines.append("# CONTEXT - IFEval Fine-Tuning Researcher\n")
     lines.append("## Current Best\n")
     if best:
         delta = best["accuracy"] - BASELINE
@@ -50,30 +50,30 @@ def generate():
         lines.append("- No experiment kept yet. Baseline: 0.612")
     lines.append("")
 
-    # ── Section 2: Leaderboard ───────────────────────────────────────────────
+    # Section 2: Leaderboard
     lines.append("## Leaderboard\n")
     lines.append("| Rank | Name | Accuracy | Delta | Kept | Notes | Timestamp |")
     lines.append("|------|------|----------|-------|------|-------|-----------|")
     for rank, exp in enumerate(experiments, 1):
         delta = exp["accuracy"] - BASELINE
         delta_str = f"+{delta:.4f}" if delta >= 0 else f"{delta:.4f}"
-        kept_str = "✓" if exp["kept"] == 1 else ""
+        kept_str = "YES" if exp["kept"] == 1 else ""
         notes_short = (exp["notes"] or "")[:60].replace("|", "/")
         lines.append(
             f"| {rank} | `{exp['name']}` | {exp['accuracy']:.4f} | {delta_str} | {kept_str} | {notes_short} | {exp['timestamp']} |"
         )
     lines.append("")
 
-    # ── Section 3: Recent Failures ───────────────────────────────────────────
+    # Section 3: Recent Failures
     lines.append("## Recent Failures (not kept)\n")
     if recent_failures:
         for exp in recent_failures:
-            lines.append(f"- `{exp['name']}` → {exp['accuracy']:.4f} | {exp['notes'][:80]}")
+            lines.append(f"- `{exp['name']}` -> {exp['accuracy']:.4f} | {exp['notes'][:80]}")
     else:
         lines.append("- None yet")
     lines.append("")
 
-    # ── Section 4: Unexplored Techniques ────────────────────────────────────
+    # Section 4: Unexplored Techniques
     lines.append("## Unexplored Techniques\n")
     tried_names = {e["name"] for e in experiments}
     unexplored = [t for t in EXPLORED_TECHNIQUES if t not in tried_names]
@@ -86,12 +86,12 @@ def generate():
         lines.append("- All listed techniques tried. Consult PROGRAM.md Tier 4/5 for novel ideas.")
     lines.append("")
 
-    # ── Section 5: Memory Anomalies ─────────────────────────────────────────
+    # Section 5: Memory Anomalies
     lines.append("## Memory Anomalies (MEMORY_LOG.md)\n")
     lines.append(_read_file(MEMORY_LOG_PATH))
     lines.append("")
 
-    # ── Section 6: Research Notes ───────────────────────────────────────────
+    # Section 6: Research Notes
     lines.append("## Research Notes (NOTES.md)\n")
     lines.append(_read_file(NOTES_PATH))
     lines.append("")

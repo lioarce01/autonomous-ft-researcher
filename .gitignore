@@ -32,3 +32,5 @@ data/experiments.db
 # OS
 .DS_Store
 Thumbs.db
+
+CONTEXT.md

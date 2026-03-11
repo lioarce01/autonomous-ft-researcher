@@ -1,7 +1,6 @@
 """Streamlit live dashboard for IFEval fine-tuning experiments."""
 import streamlit as st
 import pandas as pd
-import plotly.express as px
 import plotly.graph_objects as go
 import os
 import sys
@@ -15,14 +14,12 @@ BASELINE = 0.612
 
 st.set_page_config(
     page_title="IFEval Fine-Tuning Researcher",
-    page_icon="🧪",
     layout="wide",
 )
 
-st.title("🧪 IFEval Fine-Tuning Researcher")
-st.caption("Qwen3.5-2B · Baseline: 0.612 · Target: beat Qwen3-4B (0.834)")
+st.title("IFEval Fine-Tuning Researcher")
+st.caption("Qwen3.5-2B | Baseline: 0.612 | Target: beat Qwen3-4B (0.834)")
 
-# Auto-refresh every 30 seconds
 st.markdown(
     """<meta http-equiv="refresh" content="30">""",
     unsafe_allow_html=True,
@@ -37,9 +34,8 @@ if not experiments:
 df = pd.DataFrame(experiments)
 df["delta"] = df["accuracy"] - BASELINE
 df["delta_str"] = df["delta"].apply(lambda x: f"+{x:.4f}" if x >= 0 else f"{x:.4f}")
-df["kept_str"] = df["kept"].apply(lambda x: "✓" if x == 1 else "")
+df["kept_str"] = df["kept"].apply(lambda x: "YES" if x == 1 else "")
 
-# ── KPI row ──────────────────────────────────────────────────────────────────
 best = df[df["kept"] == 1]["accuracy"].max() if (df["kept"] == 1).any() else None
 col1, col2, col3, col4 = st.columns(4)
 
@@ -52,7 +48,7 @@ with col3:
         delta = best - BASELINE
         st.metric("Best Accuracy", f"{best:.4f}", delta=f"{delta:+.4f}")
     else:
-        st.metric("Best Accuracy", "—")
+        st.metric("Best Accuracy", "N/A")
 with col4:
     target = 0.834
     if best:
@@ -63,13 +59,11 @@ with col4:
 
 st.divider()
 
-# ── Accuracy over experiments chart ─────────────────────────────────────────
 st.subheader("Accuracy by Experiment")
 
 df_sorted = df.sort_values("timestamp")
 fig = go.Figure()
 
-# All experiments
 fig.add_trace(go.Bar(
     x=df_sorted["name"],
     y=df_sorted["accuracy"],
@@ -79,11 +73,9 @@ fig.add_trace(go.Bar(
     textposition="outside",
 ))
 
-# Baseline line
 fig.add_hline(y=BASELINE, line_dash="dash", line_color="orange",
               annotation_text=f"Baseline {BASELINE}", annotation_position="bottom right")
 
-# Target line
 fig.add_hline(y=0.834, line_dash="dot", line_color="red",
               annotation_text="Qwen3-4B 0.834", annotation_position="top right")
 
@@ -96,7 +88,6 @@ fig.update_layout(
 )
 st.plotly_chart(fig, use_container_width=True)
 
-# ── Leaderboard table ────────────────────────────────────────────────────────
 st.subheader("Leaderboard")
 display_cols = ["name", "accuracy", "delta_str", "kept_str", "notes", "hypothesis", "timestamp"]
 st.dataframe(
@@ -109,7 +100,6 @@ st.dataframe(
     hide_index=True,
 )
 
-# ── Notes sidebar ────────────────────────────────────────────────────────────
 notes_path = os.path.join(ROOT, "NOTES.md")
 if os.path.exists(notes_path):
     with st.expander("Research Notes (NOTES.md)"):

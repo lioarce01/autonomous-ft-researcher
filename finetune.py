@@ -14,27 +14,27 @@ import subprocess
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
-# ══════════════════════════════════════════════════════════════════════════════
-# CONFIG — agent edits this section each experiment
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
+# CONFIG - agent edits this section each experiment
+# ==============================================================================
 
-# ── Model ─────────────────────────────────────────────────────────────────────
+# Model
 MODEL_NAME       = os.path.join(ROOT, "data", "models", "Qwen3.5-2B")
 BUDGET_SECONDS   = 1200   # 20-min wall-clock; NEVER CHANGE
 ADAPTER_OUT      = os.path.join(ROOT, "data", "adapter_tmp")
 
-# ── QLoRA quantization ────────────────────────────────────────────────────────
+# QLoRA quantization
 LOAD_IN_4BIT     = True
 BNB_4BIT_COMPUTE = "bfloat16"
 BNB_4BIT_QUANT   = "nf4"
 
-# ── LoRA adapter ──────────────────────────────────────────────────────────────
+# LoRA adapter
 LORA_RANK        = 8
 LORA_ALPHA       = 16
 LORA_DROPOUT     = 0.05
-LORA_TARGET_MODULES = ["q_proj", "v_proj"]   # attention layers only (baseline)
+LORA_TARGET_MODULES = ["q_proj", "k_proj", "v_proj", "o_proj"]   # all attention projections
 
-# ── Training ──────────────────────────────────────────────────────────────────
+# Training
 TRAIN_DATA       = os.path.join(ROOT, "data", "train_alpaca.jsonl")
 TRAIN_SAMPLES    = 10_000
 LEARNING_RATE    = 2e-4
@@ -47,10 +47,11 @@ MAX_SEQ_LEN      = 512
 BF16             = True
 THINKING_MODE    = False   # disable <think> tokens during evaluation
 
-# ── Prompt ────────────────────────────────────────────────────────────────────
+# Prompt
 SYSTEM_PROMPT = "You are a helpful assistant. Follow all instructions precisely."
 
-# ══════════════════════════════════════════════════════════════════════════════
+# ==============================================================================
+
 
 def format_train(instruction: str, output: str) -> str:
     return (
@@ -96,7 +97,6 @@ def train(start_time: float):
 
     os.makedirs(ADAPTER_OUT, exist_ok=True)
 
-    # ── Load model ────────────────────────────────────────────────────────────
     print("Loading tokenizer...", flush=True)
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, trust_remote_code=True)
     if tokenizer.pad_token is None:
@@ -122,7 +122,6 @@ def train(start_time: float):
     )
     model.config.use_cache = False
 
-    # ── Apply LoRA ────────────────────────────────────────────────────────────
     lora_config = LoraConfig(
         r=LORA_RANK,
         lora_alpha=LORA_ALPHA,
@@ -134,7 +133,6 @@ def train(start_time: float):
     model = get_peft_model(model, lora_config)
     model.print_trainable_parameters()
 
-    # ── Dataset ───────────────────────────────────────────────────────────────
     raw_texts = load_training_data()
 
     class TextDataset(Dataset):
@@ -156,7 +154,6 @@ def train(start_time: float):
     dataset = TextDataset(raw_texts, tokenizer, MAX_SEQ_LEN)
     collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
 
-    # ── Compute training budget ───────────────────────────────────────────────
     elapsed = time.time() - start_time
     # Use 75% of budget for training; reserve 25% for evaluation
     train_budget = BUDGET_SECONDS * 0.75 - elapsed
@@ -164,14 +161,13 @@ def train(start_time: float):
         print("WARNING: less than 60s left for training, skipping straight to eval", flush=True)
         train_budget = 60
 
-    # Estimate steps per epoch to stay within budget
     steps_per_epoch = len(dataset) // (BATCH_SIZE * GRAD_ACCUM)
-    # Rough estimate: 1 step ≈ 2s on RTX 5070 with 4-bit + seq512
+    # Rough estimate: 1 step ~2s on RTX 5070 with 4-bit + seq512
     secs_per_step = 2.0
     max_steps = int(train_budget / secs_per_step)
     total_steps = steps_per_epoch * MAX_EPOCHS
     max_steps = min(max_steps, total_steps)
-    print(f"Training budget: {train_budget:.0f}s → max {max_steps} steps", flush=True)
+    print(f"Training budget: {train_budget:.0f}s -> max {max_steps} steps", flush=True)
 
     training_args = TrainingArguments(
         output_dir=ADAPTER_OUT,
@@ -204,7 +200,6 @@ def train(start_time: float):
     tokenizer.save_pretrained(ADAPTER_OUT)
     print(f"Adapter saved to {ADAPTER_OUT}", flush=True)
 
-    # Free GPU memory before evaluation
     del model
     del trainer
     import gc
