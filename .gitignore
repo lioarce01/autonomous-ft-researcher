@@ -1,0 +1,33 @@
+# Model weights
+data/models/
+data/adapter_tmp/
+*.safetensors
+*.bin
+*.pt
+*.gguf
+
+# Data files (large)
+data/train_alpaca.jsonl
+data/train_ultrafeedback.jsonl
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+*.egg-info/
+
+# Logs
+run.log
+*.log
+
+# DB
+data/experiments.db
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
