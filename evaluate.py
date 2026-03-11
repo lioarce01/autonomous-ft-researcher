@@ -20,7 +20,8 @@ MODEL_PATH    = os.path.join(ROOT, "data", "models", "Qwen3.5-2B")
 ADAPTER_PATH  = os.path.join(ROOT, "data", "adapter_tmp")
 IFEVAL_PATH   = os.path.join(ROOT, "data", "ifeval_prompts.jsonl")
 
-THINKING_MODE = False   # never use <think> tokens for consistent comparison
+THINKING_MODE  = False  # never use <think> tokens for consistent comparison
+EVAL_BATCH_SIZE = 16    # prompts generated in parallel; lower if OOM
 
 
 # ── IFEval Verifiers ─────────────────────────────────────────────────────────
@@ -251,6 +252,10 @@ def load_model(use_adapter: bool):
 
     print(f"Loading tokenizer from {MODEL_PATH}...", flush=True)
     tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH, trust_remote_code=True)
+    # Left-pad so all prompts in a batch align on the right (generation side)
+    tokenizer.padding_side = "left"
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
 
     bnb_config = BitsAndBytesConfig(
         load_in_4bit=True,
@@ -279,32 +284,50 @@ def load_model(use_adapter: bool):
     return model, tokenizer
 
 
-# ── Generation ────────────────────────────────────────────────────────────────
+# ── Batch Generation ──────────────────────────────────────────────────────────
 
-def generate_response(model, tokenizer, prompt: str, max_new_tokens: int = 512) -> str:
+def generate_batch(model, tokenizer, prompt_texts: list[str], max_new_tokens: int = 512) -> list[str]:
+    """Generate responses for a batch of prompts in one forward pass."""
     import torch
 
-    messages = [{"role": "user", "content": prompt}]
-    # Disable thinking mode
-    text = tokenizer.apply_chat_template(
-        messages,
-        tokenize=False,
-        add_generation_prompt=True,
-        enable_thinking=False,
-    )
-    inputs = tokenizer(text, return_tensors="pt").to(model.device)
+    # Format all prompts with chat template
+    formatted = [
+        tokenizer.apply_chat_template(
+            [{"role": "user", "content": p}],
+            tokenize=False,
+            add_generation_prompt=True,
+            enable_thinking=False,
+        )
+        for p in prompt_texts
+    ]
+
+    inputs = tokenizer(
+        formatted,
+        return_tensors="pt",
+        padding=True,
+        truncation=True,
+        max_length=1024,
+    ).to(model.device)
+
+    input_len = inputs["input_ids"].shape[1]
 
     with torch.no_grad():
         outputs = model.generate(
             **inputs,
             max_new_tokens=max_new_tokens,
-            do_sample=False,          # greedy decoding
+            do_sample=False,
             temperature=1.0,
             pad_token_id=tokenizer.eos_token_id,
         )
-    # Decode only newly generated tokens
-    new_tokens = outputs[0][inputs["input_ids"].shape[1]:]
-    return tokenizer.decode(new_tokens, skip_special_tokens=True).strip()
+
+    # Decode only the newly generated tokens for each item
+    responses = []
+    for i, out in enumerate(outputs):
+        new_tokens = out[input_len:]
+        text = tokenizer.decode(new_tokens, skip_special_tokens=True).strip()
+        responses.append(text)
+
+    return responses
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -336,30 +359,31 @@ def main():
     instruction_correct = 0
     instruction_total = 0
 
-    for i, item in enumerate(prompts):
-        prompt_text = item["prompt"]
-        instruction_ids = item.get("instruction_id_list", [])
-        kwargss = item.get("kwargs", [{}] * len(instruction_ids))
+    for batch_start in range(0, len(prompts), EVAL_BATCH_SIZE):
+        batch = prompts[batch_start : batch_start + EVAL_BATCH_SIZE]
+        batch_prompts = [item["prompt"] for item in batch]
 
-        response = generate_response(model, tokenizer, prompt_text)
+        responses = generate_batch(model, tokenizer, batch_prompts)
 
-        # Evaluate each instruction in this prompt
-        instr_results = []
-        for instr_id, kw in zip(instruction_ids, kwargss):
-            ok = verify_instruction(instr_id, kw if kw else {}, response)
-            instr_results.append(ok)
+        for item, response in zip(batch, responses):
+            instruction_ids = item.get("instruction_id_list", [])
+            kwargss = item.get("kwargs", [{}] * len(instruction_ids))
 
-        all_passed = all(instr_results)
-        if all_passed:
-            prompt_correct += 1
-        instruction_correct += sum(instr_results)
-        instruction_total += len(instr_results)
+            instr_results = [
+                verify_instruction(instr_id, kw if kw else {}, response)
+                for instr_id, kw in zip(instruction_ids, kwargss)
+            ]
 
-        if (i + 1) % 50 == 0:
-            print(
-                f"  [{i+1}/{len(prompts)}] prompt_acc={prompt_correct/(i+1):.4f}",
-                flush=True,
-            )
+            if all(instr_results):
+                prompt_correct += 1
+            instruction_correct += sum(instr_results)
+            instruction_total += len(instr_results)
+
+        done = min(batch_start + EVAL_BATCH_SIZE, len(prompts))
+        print(
+            f"  [{done}/{len(prompts)}] prompt_acc={prompt_correct/done:.4f}",
+            flush=True,
+        )
 
     prompt_acc = prompt_correct / len(prompts)
     instr_acc = instruction_correct / max(instruction_total, 1)
