@@ -12,6 +12,8 @@ import time
 import sys
 import subprocess
 
+sys.stdout.reconfigure(line_buffering=True)
+
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
 # ==============================================================================
@@ -19,7 +21,7 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 # ==============================================================================
 
 # Model
-MODEL_NAME       = os.path.join(ROOT, "data", "models", "Qwen3.5-2B")
+MODEL_NAME       = os.path.join(ROOT, "data", "models", "Qwen3.5-0.8B")
 BUDGET_SECONDS   = 1200   # 20-min wall-clock; NEVER CHANGE
 ADAPTER_OUT      = os.path.join(ROOT, "data", "adapter_tmp")
 
@@ -35,12 +37,12 @@ LORA_DROPOUT     = 0.05
 LORA_TARGET_MODULES = ["q_proj", "k_proj", "v_proj", "o_proj"]   # all attention projections
 
 # Training
-TRAIN_DATA       = os.path.join(ROOT, "data", "train_alpaca.jsonl")
-TRAIN_SAMPLES    = 5_000
+TRAIN_DATA       = os.path.join(ROOT, "data", "train_synthetic.jsonl")
+TRAIN_SAMPLES    = 10_000   # will use all ~470 synthetic examples
 LEARNING_RATE    = 2e-4
 BATCH_SIZE       = 4
 GRAD_ACCUM       = 8    # effective batch = BATCH_SIZE * GRAD_ACCUM
-MAX_EPOCHS       = 2
+MAX_EPOCHS       = 1
 WARMUP_RATIO     = 0.03
 LR_SCHEDULER     = "cosine"
 MAX_SEQ_LEN      = 256

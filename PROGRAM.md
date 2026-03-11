@@ -4,11 +4,14 @@ prompt_level_strict_acc on Qwen3.5-2B by editing finetune.py, running experiment
 and iterating within a 20-minute budget per experiment.
 
 Metric:    accuracy (higher is better, 0.0-1.0)
-Baseline:  0.5471 (raw Qwen3.5-2B evaluated with our verifiers)
-Target:    beat 0.834 (Qwen3-4B IFEval score)
+Model:     Qwen3.5-0.8B (POC model -- same hybrid architecture as 2B, ~3x faster)
+Baseline:  0.521 (model card, non-thinking) -- rerun evaluate.py --no-adapter to confirm with our verifiers
+Target:    beat 0.682 (Qwen3-1.7B IFEval score -- realistic target for 0.8B)
+Stretch:   beat 0.834 (Qwen3-4B)
 Budget:    BUDGET_SECONDS = 1200 (20 min wall-clock) -- NEVER change this constant
 
 KEY INSIGHT: Generic SFT data (Alpaca, UltraFeedback) HURTS IFEval accuracy.
+Confirmed on Qwen3.5-2B: Alpaca training dropped accuracy from 0.5471 to ~0.50.
 Training on data that does not contain explicit verifiable constraints makes the
 model more verbose and less constraint-aware. Always prefer constraint-matched
 training data over generic instruction-following data.
@@ -197,5 +200,6 @@ DoRA            Liu 2024  arxiv:2402.09353  -- separate magnitude/direction; oft
 RSLoRA          Kalajdzievski 2024 arxiv:2312.03732 -- scale 1/sqrt(r); better at high rank
 Rejection SFT   Yuan 2023 arxiv:2308.01825  -- generate N responses, keep passing ones; directly optimizes metric
 UltraFeedback   Cui 2023  arxiv:2310.01377  -- 256k diverse SFT data; generic, weak signal for IFEval
+Qwen3.5-0.8B    Qwen 2026 -- hybrid DeltaNet+sparse attn; 52.1 IFEval (non-thinking); POC model
 Qwen3.5-2B      Qwen 2026 -- hybrid DeltaNet+sparse attn; 61.2 IFEval (non-thinking); 201 languages
 </papers>

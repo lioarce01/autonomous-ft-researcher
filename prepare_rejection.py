@@ -11,16 +11,20 @@ Output: data/train_ifeval_rejection.jsonl
 Format: {"instruction": "<ifeval prompt>", "output": "<passing response>"}
 
 Usage:
-    uv run python prepare_rejection.py               # use base model
-    uv run python prepare_rejection.py --adapter     # use current adapter in data/adapter_tmp/
+    uv run python prepare_rejection.py                                    # use 0.8B base model
+    uv run python prepare_rejection.py --model-path data/models/Qwen3.5-2B  # use 2B model
+    uv run python prepare_rejection.py --adapter                          # use current adapter in data/adapter_tmp/
 """
 import argparse
 import json
 import os
 import sys
 
+# Force line-buffered stdout so prints appear immediately when redirected to file
+sys.stdout.reconfigure(line_buffering=True)
+
 ROOT = os.path.dirname(os.path.abspath(__file__))
-MODEL_PATH   = os.path.join(ROOT, "data", "models", "Qwen3.5-2B")
+_DEFAULT_MODEL_PATH = os.path.join(ROOT, "data", "models", "Qwen3.5-0.8B")
 ADAPTER_PATH = os.path.join(ROOT, "data", "adapter_tmp")
 IFEVAL_PATH  = os.path.join(ROOT, "data", "ifeval_prompts.jsonl")
 OUT_PATH     = os.path.join(ROOT, "data", "train_ifeval_rejection.jsonl")
@@ -28,20 +32,15 @@ OUT_PATH     = os.path.join(ROOT, "data", "train_ifeval_rejection.jsonl")
 N_SAMPLES       = 8     # responses generated per prompt
 TEMPERATURE     = 0.8   # sampling temperature for diversity
 MAX_NEW_TOKENS  = 700   # slightly more headroom than eval for word-count constraints
-BATCH_SIZE      = 4     # prompts per batch during generation
+BATCH_SIZE      = 16    # different prompts per batch (same as evaluate.py)
 
 
-# Import verifiers from evaluate.py
-sys.path.insert(0, ROOT)
-from evaluate import verify_instruction
-
-
-def load_model(use_adapter: bool):
+def load_model(use_adapter: bool, model_path: str):
     import torch
     from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
 
-    print(f"Loading tokenizer from {MODEL_PATH}...", flush=True)
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH, trust_remote_code=True)
+    print(f"Loading tokenizer from {model_path}...", flush=True)
+    tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
     tokenizer.padding_side = "left"
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
@@ -53,9 +52,9 @@ def load_model(use_adapter: bool):
         bnb_4bit_use_double_quant=True,
     )
 
-    print(f"Loading model...", flush=True)
+    print(f"Loading model from {model_path}...", flush=True)
     model = AutoModelForCausalLM.from_pretrained(
-        MODEL_PATH,
+        model_path,
         quantization_config=bnb_config,
         device_map="auto",
         trust_remote_code=True,
@@ -113,19 +112,24 @@ def generate_batch(model, tokenizer, prompts: list[str]) -> list[str]:
     return responses
 
 
-def passes_all(item: dict, response: str) -> bool:
-    instruction_ids = item.get("instruction_id_list", [])
-    kwargss = item.get("kwargs", [{}] * len(instruction_ids))
-    return all(
-        verify_instruction(iid, kw if kw else {}, response)
-        for iid, kw in zip(instruction_ids, kwargss)
-    )
-
-
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--adapter", action="store_true", help="Use adapter from data/adapter_tmp/")
+    parser.add_argument("--model-path", default=_DEFAULT_MODEL_PATH, help="Path to model (default: Qwen3.5-0.8B)")
     args = parser.parse_args()
+    MODEL_PATH = args.model_path if os.path.isabs(args.model_path) else os.path.join(ROOT, args.model_path)
+
+    # Import here so prints above appear before the heavy evaluate.py module loads
+    sys.path.insert(0, ROOT)
+    from evaluate import verify_instruction
+
+    def passes_all(item: dict, response: str) -> bool:
+        instruction_ids = item.get("instruction_id_list", [])
+        kwargss = item.get("kwargs", [{}] * len(instruction_ids))
+        return all(
+            verify_instruction(iid, kw if kw else {}, response)
+            for iid, kw in zip(instruction_ids, kwargss)
+        )
 
     prompts = []
     with open(IFEVAL_PATH, "r", encoding="utf-8") as f:
@@ -135,36 +139,44 @@ def main():
     print(f"Loaded {len(prompts)} IFEval prompts", flush=True)
     print(f"Generating {N_SAMPLES} responses per prompt ({len(prompts) * N_SAMPLES} total)...", flush=True)
 
-    model, tokenizer = load_model(use_adapter=args.adapter)
+    model, tokenizer = load_model(use_adapter=args.adapter, model_path=MODEL_PATH)
 
     kept = []
-    prompt_pass_count = 0
+    # passed_responses[i] accumulates passing responses for prompts[i]
+    passed_responses = [[] for _ in range(len(prompts))]
 
-    for idx, item in enumerate(prompts):
-        prompt_text = item["prompt"]
-        passed_responses = []
-
-        # Generate N_SAMPLES in mini-batches
-        for batch_start in range(0, N_SAMPLES, BATCH_SIZE):
-            batch_size = min(BATCH_SIZE, N_SAMPLES - batch_start)
-            responses = generate_batch(model, tokenizer, [prompt_text] * batch_size)
-            for resp in responses:
+    # N_SAMPLES rounds, each round batches all 541 prompts in groups of BATCH_SIZE
+    # This mirrors evaluate.py: batch different prompts together for GPU efficiency
+    for sample_round in range(N_SAMPLES):
+        round_kept = 0
+        n_batches = (len(prompts) + BATCH_SIZE - 1) // BATCH_SIZE
+        for batch_idx, batch_start in enumerate(range(0, len(prompts), BATCH_SIZE)):
+            batch = prompts[batch_start : batch_start + BATCH_SIZE]
+            batch_texts = [item["prompt"] for item in batch]
+            responses = generate_batch(model, tokenizer, batch_texts)
+            for i, (item, resp) in enumerate(zip(batch, responses)):
                 if passes_all(item, resp):
-                    passed_responses.append(resp)
-
-        if passed_responses:
-            prompt_pass_count += 1
-            for resp in passed_responses:
-                kept.append({"instruction": prompt_text, "output": resp})
-
-        if (idx + 1) % 50 == 0 or idx == len(prompts) - 1:
+                    passed_responses[batch_start + i].append(resp)
+                    round_kept += 1
+            done = batch_start + len(batch)
             print(
-                f"  [{idx+1}/{len(prompts)}] prompts with passing responses: {prompt_pass_count} | "
-                f"total kept: {len(kept)}",
+                f"  [round {sample_round+1}/{N_SAMPLES} | batch {batch_idx+1}/{n_batches} | {done}/{len(prompts)} prompts] "
+                f"passing so far this round: {round_kept}",
                 flush=True,
             )
 
-    print(f"\nDone. {len(kept)} passing (prompt, response) pairs from {prompt_pass_count}/{len(prompts)} prompts.")
+        print(
+            f"  === round {sample_round+1} done: {round_kept} passing | "
+            f"prompts with >=1 pass: {sum(1 for p in passed_responses if p)} ===",
+            flush=True,
+        )
+
+    for idx, (item, responses) in enumerate(zip(prompts, passed_responses)):
+        for resp in responses:
+            kept.append({"instruction": item["prompt"], "output": resp})
+
+    prompts_with_pass = sum(1 for p in passed_responses if p)
+    print(f"\nDone. {len(kept)} passing (prompt, response) pairs from {prompts_with_pass}/{len(prompts)} prompts.")
 
     with open(OUT_PATH, "w", encoding="utf-8") as f:
         for ex in kept:

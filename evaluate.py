@@ -15,8 +15,10 @@ import os
 import re
 import sys
 
+sys.stdout.reconfigure(line_buffering=True)
+
 ROOT = os.path.dirname(os.path.abspath(__file__))
-MODEL_PATH    = os.path.join(ROOT, "data", "models", "Qwen3.5-2B")
+MODEL_PATH    = os.path.join(ROOT, "data", "models", "Qwen3.5-0.8B")
 ADAPTER_PATH  = os.path.join(ROOT, "data", "adapter_tmp")
 IFEVAL_PATH   = os.path.join(ROOT, "data", "ifeval_prompts.jsonl")
 
